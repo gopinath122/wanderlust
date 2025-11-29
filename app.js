@@ -131,6 +131,9 @@ app.use("/listings", listingRouter); // All routes starting with /listings go he
 app.use("/listings/:id/reviews", reviewRouter); // All review routes go here (Child Route)
 app.use("/", userRouter); // User routes (signup/login) go to root
 
+app.get("/", (req, res) => {
+  res.redirect("/listings");
+});
 // --- ERROR HANDLING ---
 
 // 404 Handler (Catch-All)
