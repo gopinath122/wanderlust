@@ -5,35 +5,27 @@ const express = require("express");
 const mongoose = require("mongoose");
 const path = require("path");
 const methodOverride = require("method-override");
-const ejsMate = require("ejs-mate"); // Layout engine for EJS (helps with boilerplate)
-const wrapAsync = require("./utils/wrapAsync.js"); // Custom wrapper to catch async errors
-const ExpressError = require("./utils/ExpressError.js"); // Custom Error class for cleaner error messages
+const ejsMate = require("ejs-mate");
+const wrapAsync = require("./utils/wrapAsync.js");
+const ExpressError = require("./utils/ExpressError.js");
 
-// Import Joi Schemas for server-side validation
 const { listingSchema, reviewSchema } = require("./schema.js");
 
-// Import Mongoose Models
 const Review = require("./models/review.js");
 const Listing = require("./models/listing.js");
 
-// Import Routes (MVC Architecture)
-// These files contain the routes for specific features to keep app.js clean
 const listingRouter = require("./routes/listing.js");
 const reviewRouter = require("./routes/review.js");
 const userRouter = require("./routes/user.js");
 
-// Import Authentication & Session Modules
-const session = require("express-session"); // Manages user sessions (cookies)
+const session = require("express-session");
 const MongoStore = require("connect-mongo");
-const flash = require("connect-flash"); // Displays one-time messages (like "Login Successful")
-const passport = require("passport"); // The core authentication library
-const LocalStrategy = require("passport-local"); // The strategy for username/password login
-const User = require("./models/user.js"); // The User model (configured with passport-local-mongoose)
+const flash = require("connect-flash");
+const passport = require("passport");
+const LocalStrategy = require("passport-local");
+const User = require("./models/user.js");
 
 // --- DATABASE CONNECTION ---
-// We use an async function to connect to MongoDB.
-// This is the starting point of our data layer.
-// const dbUrl = process.env.ATLASDB_URL;
 const dburl = process.env.ATLASDB_URL;
 async function main() {
   await mongoose.connect(dburl);
@@ -49,39 +41,33 @@ main()
 const app = express();
 
 // --- APP CONFIGURATION & MIDDLEWARE ---
-// Setup EJS and Views folder
 app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");
 
-// Parsing Middleware
-app.use(express.urlencoded({ extended: true })); // Parses form data (req.body)
-app.use(express.json()); // Parses JSON data (for API clients like Hoppscotch)
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-// Static Files
-app.use(express.static(path.join(__dirname, "public"))); // Serves CSS, JS, Images
+app.use(express.static(path.join(__dirname, "public")));
 
-// Method Override
-// Allows us to use PUT and DELETE requests from HTML forms (which only support GET/POST natively)
 app.use(methodOverride("_method"));
 
-// EJS Mate
-// Enables layouts/boilerplate functionality (blocks, partials)
 app.engine("ejs", ejsMate);
 
 // --- SESSION & FLASH CONFIGURATION ---
-// This creates the session object and stores it in a cookie in the browser.
 const store = MongoStore.create({
   mongoUrl: dburl,
   collectionName: "sessions",
-  ttl: 7 * 24 * 60 * 60, // 7 days in seconds
+  ttl: 7 * 24 * 60 * 60,
   autoRemove: "native",
   touchAfter: 24 * 3600,
-  // ✅ Don't use crypto in v4.6.0
 });
 
 store.on("error", (err) => {
   console.log("❌ ERROR IN MONGO SESSION STORE", err);
 });
+
+// ✅ CRITICAL FIX #1: Trust proxy for Render deployment
+app.set("trust proxy", 1);
 
 const sessionOptions = {
   store: store,
@@ -97,56 +83,93 @@ const sessionOptions = {
 };
 app.use(session(sessionOptions));
 
-app.use(flash()); // Must be used AFTER session middleware
+app.use(flash());
 
 // --- AUTHENTICATION INITIALIZATION ---
-// These lines must come AFTER session middleware because login state is stored in the session.
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Configure Passport to use our User model and the LocalStrategy
 passport.use(new LocalStrategy(User.authenticate()));
 
-// How to store/retrieve user data from the session
-passport.serializeUser(User.serializeUser()); // Store user ID in session
-passport.deserializeUser(User.deserializeUser()); // Fetch full user details from ID
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 // --- GLOBAL LOCALS MIDDLEWARE ---
-// This middleware runs for EVERY request.
-// It puts flash messages and the current user info into 'res.locals'.
-// This makes 'success', 'error', and 'curruser' automatically available in ALL EJS templates.
 app.use((req, res, next) => {
-  // console.log("🔍 Request URL:", req.url);
-  // console.log("🔍 currUser:", req.user);
   res.locals.success = req.flash("success");
   res.locals.error = req.flash("error");
-  res.locals.currUser = req.user; // req.user is populated by Passport if logged in
+  res.locals.currUser = req.user;
   next();
 });
 
+// // ✅ DEBUG ROUTES - Remove these after fixing the issue
+// app.get("/debug-users", async (req, res) => {
+//   try {
+//     // const users = await User.find({});
+//     const users = await User.find({}).select("+hash +salt");
+//     res.json({
+//       count: users.length,
+//       users: users.map((u) => ({
+//         id: u._id,
+//         username: u.username,
+//         email: u.email,
+//         hasHash: u.hash ? true : false,
+//         hasSalt: u.salt ? true : false,
+//         hashType: typeof u.hash,
+//         saltType: typeof u.salt,
+//         hashLength: u.hash ? u.hash.length : 0,
+//         saltLength: u.salt ? u.salt.length : 0,
+//       })),
+//     });
+//   } catch (e) {
+//     res.json({ error: e.message });
+//   }
+// });
+// app.get("/debug-schema", (req, res) => {
+//   const userFields = Object.keys(User.schema.paths);
+//   res.json({
+//     fields: userFields,
+//     hasHashField: userFields.includes("hash"),
+//     hasSaltField: userFields.includes("salt"),
+//     hasUsernameField: userFields.includes("username"),
+//   });
+// });
+// app.get("/debug-env", (req, res) => {
+//   res.json({
+//     NODE_ENV: process.env.NODE_ENV,
+//     isProduction: process.env.NODE_ENV === "production",
+//   });
+// });
+// // ✅ FIX #2: Delete all users without passwords (TEMPORARY ROUTE)
+// app.get("/fix-users", async (req, res) => {
+//   try {
+//     // Just delete ALL users since they all have no passwords
+//     const result = await User.deleteMany({});
+
+//     res.json({
+//       message: "✅ Deleted ALL users (they had no passwords anyway)",
+//       deletedCount: result.deletedCount,
+//       instructions: "Now go to /signup and create a NEW account!",
+//     });
+//   } catch (e) {
+//     res.json({ error: e.message });
+//   }
+// });
 // --- ROUTE MOUNTING ---
-// We tell Express to use our imported route files.
-// This keeps app.js clean and follows MVC principles.
-app.use("/listings", listingRouter); // All routes starting with /listings go here
-app.use("/listings/:id/reviews", reviewRouter); // All review routes go here (Child Route)
-app.use("/", userRouter); // User routes (signup/login) go to root
+app.use("/listings", listingRouter);
+app.use("/listings/:id/reviews", reviewRouter);
+app.use("/", userRouter);
 
 app.get("/", (req, res) => {
   res.redirect("/listings");
 });
-// --- ERROR HANDLING ---
 
-// 404 Handler (Catch-All)
-// If a request matches NONE of the routes above, this runs.
+// --- ERROR HANDLING ---
 app.use((req, res, next) => {
   next(new ExpressError(404, "Page Not Found!!"));
 });
 
-// Main Error Handler Middleware
-// This catches any error thrown by 'next(err)' or 'throw new Error' anywhere in the app.
-// Main Error Handler Middleware
 app.use((err, req, res, next) => {
-  // ✅ CRITICAL: Check if headers were already sent
   if (res.headersSent) {
     console.error("Headers already sent, delegating to default handler:", err);
     return next(err);
@@ -156,6 +179,7 @@ app.use((err, req, res, next) => {
   console.error("Error Handler:", err);
   res.status(status).render("error.ejs", { err });
 });
+
 // Start Server
 app.listen(8080, (req, res) => {
   console.log("app is listening on 8080 port");
